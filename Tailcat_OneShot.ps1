@@ -27,41 +27,55 @@ function Get-Tailcat {
     Write-Host ""
     Write-Host "Downloading Tailcat $TailcatVersion..."
 
-    $Release = Invoke-RestMethod `
-        -Uri $GitHubReleaseUrl `
-        -Headers @{ "User-Agent" = "Tailcat-OneShot" }
+    $OldSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
 
-    $Asset = $Release.assets |
-        Where-Object {
-            $_.name -match "windows_amd64.*\.zip$" -or
-            $_.name -match "windows-amd64.*\.zip$"
-        } |
-        Select-Object -First 1
+    try {
 
-    if (-not $Asset) {
-        throw "Windows AMD64 Tailcat release asset was not found."
+        # Windows PowerShell 5.1 on older Windows Server versions can
+        # default to TLS versions that GitHub no longer accepts.
+
+        [Net.ServicePointManager]::SecurityProtocol =
+            $OldSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+        $Release = Invoke-RestMethod `
+            -Uri $GitHubReleaseUrl `
+            -Headers @{ "User-Agent" = "Tailcat-OneShot" }
+
+        $Asset = $Release.assets |
+            Where-Object {
+                $_.name -match "windows_amd64.*\.zip$" -or
+                $_.name -match "windows-amd64.*\.zip$"
+            } |
+            Select-Object -First 1
+
+        if (-not $Asset) {
+            throw "Windows AMD64 Tailcat release asset was not found."
+        }
+
+        $ChecksumsAsset = $Release.assets |
+            Where-Object { $_.name -eq "checksums.txt" } |
+            Select-Object -First 1
+
+        if (-not $ChecksumsAsset) {
+            throw "checksums.txt was not found in the Tailcat release."
+        }
+
+        $ZipFile       = Join-Path $Root $Asset.name
+        $ChecksumsFile = Join-Path $Root "checksums.txt"
+
+        Invoke-WebRequest `
+            -Uri $Asset.browser_download_url `
+            -OutFile $ZipFile `
+            -UseBasicParsing
+
+        Invoke-WebRequest `
+            -Uri $ChecksumsAsset.browser_download_url `
+            -OutFile $ChecksumsFile `
+            -UseBasicParsing
     }
-
-    $ChecksumsAsset = $Release.assets |
-        Where-Object { $_.name -eq "checksums.txt" } |
-        Select-Object -First 1
-
-    if (-not $ChecksumsAsset) {
-        throw "checksums.txt was not found in the Tailcat release."
+    finally {
+        [Net.ServicePointManager]::SecurityProtocol = $OldSecurityProtocol
     }
-
-    $ZipFile       = Join-Path $Root $Asset.name
-    $ChecksumsFile = Join-Path $Root "checksums.txt"
-
-    Invoke-WebRequest `
-        -Uri $Asset.browser_download_url `
-        -OutFile $ZipFile `
-        -UseBasicParsing
-
-    Invoke-WebRequest `
-        -Uri $ChecksumsAsset.browser_download_url `
-        -OutFile $ChecksumsFile `
-        -UseBasicParsing
 
     $ChecksumLine = Get-Content $ChecksumsFile |
         Where-Object { $_ -match [regex]::Escape($Asset.name) } |
