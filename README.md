@@ -55,7 +55,7 @@ https://192.168.1.40    NAS
 ### Linux
 
 * Linux on `amd64`, `arm64` or `armv7`
-* Bash
+* POSIX-compatible `/bin/sh`
 * `curl`, `tar`, `sha256sum`, `awk`, `mktemp` and `uname`
 * Internet access
 
@@ -191,6 +191,12 @@ Download `Tailcat_OneShot.sh`, make it executable and run it as a normal user:
 ```bash
 chmod +x Tailcat_OneShot.sh
 ./Tailcat_OneShot.sh
+```
+
+Or run it directly with the system shell:
+
+```sh
+sh Tailcat_OneShot.sh
 ```
 
 The Linux script has only two operating modes:
