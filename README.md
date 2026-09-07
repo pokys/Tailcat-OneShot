@@ -48,7 +48,7 @@ https://192.168.1.40    NAS
 ### Windows
 
 * Windows
-* PowerShell
+* Windows PowerShell 5.1 or PowerShell 7
 * Internet access
 * Microsoft Edge is optional on the client
 
@@ -86,6 +86,9 @@ Tailcat-OneShot
 
 [2] CLIENT
     Connect to exit-node and open temporary Edge when available
+
+[3] FORWARD
+    Forward a local TCP port to a service on the remote network
 
 [Q] Quit
 ```
@@ -199,7 +202,7 @@ Or run it directly with the system shell:
 sh Tailcat_OneShot.sh
 ```
 
-The Linux script has only two operating modes:
+The Linux script has three operating modes:
 
 ```text
 [1] SERVER
@@ -207,6 +210,9 @@ The Linux script has only two operating modes:
 
 [2] CLIENT
     Start a local SOCKS5 proxy for manual configuration
+
+[3] FORWARD
+    Forward a local TCP port to a service on the remote network
 ```
 
 The server prints a temporary `tc...` token. On the client, enter that token
@@ -227,6 +233,53 @@ SOCKS v5**. Keep the script running and press `Ctrl+C` when finished.
 The Linux script does not detect, configure or launch a browser. It does not
 install missing commands or packages.
 
+### Optional QR code in the Linux console
+
+In SERVER mode, the script offers to display the token as a QR code when
+`qrencode` is available. Press `y` to use it, or Enter to keep text only.
+If the command is missing, the script prints an installation hint and continues.
+
+Install it separately, using your distribution's package manager as administrator:
+
+| Distribution | Command |
+| --- | --- |
+| Debian / Ubuntu | `apt install qrencode` |
+| Alpine Linux | `apk add libqrencode-tools` |
+
+QR generation runs locally and displays directly in the text console, including
+a VM console in ESXi or PVE. It needs UTF-8, a font with block characters and
+enough space to show the complete code; 80 columns by 40 rows is recommended
+for the usual token. A longer token may require more space. Read the QR with
+a phone or an offline QR reader on a screenshot of the console.
+
+When QR is selected, Tailcat writes the token to `tc.txt` inside the session's
+temporary directory. The script waits for about 30 seconds for a complete address
+and displays the QR once. A QR rendering error or timeout does not stop the
+server, and the text token remains available. The token file is removed with
+the session directory during normal cleanup. The installed `qrencode` package
+remains installed.
+
+## TCP forwarding (Windows and Linux)
+
+For applications such as an RDP or database client, choose **[1] SERVER** on the
+remote machine and **[3] FORWARD** on the client. Enter the server's `tc...` token
+and one mapping in this format:
+
+```text
+local-port:remote-IP:remote-port
+```
+
+For example, `13389:192.168.1.20:3389` makes `127.0.0.1:13389` on the client
+reach `192.168.1.20:3389` on the remote network. Point the RDP client at
+`127.0.0.1:13389`. IPv6 targets use brackets, for example `15432:[fd00::20]:5432`.
+
+Use local port `0` to let Tailcat choose a free port; it prints the local
+endpoint when ready. Tailcat validates the mapping and reports invalid or
+occupied ports. Listeners use localhost, and forwarding carries TCP only.
+
+Keep the script running and press `Ctrl+C` to disconnect and clean up. This
+mode opens no browser and saves no mappings or profiles.
+
 ## No installation
 
 Tailcat-OneShot does not install Tailcat on either platform.
@@ -242,6 +295,15 @@ ${TMPDIR:-/tmp}/tailcat-oneshot.XXXXXXXX
 ```
 
 The directory is removed during normal cleanup.
+
+Both scripts download the pinned release directly, use download timeouts and
+allow at most two retries for transient download failures. Archives are extracted
+only after SHA256 verification. Failed downloads are cleaned up with the session;
+there is no persistent download cache.
+
+Linux allows 15 seconds to connect and 120 seconds per download attempt. Windows
+sets the web request timeout to 120 seconds and, when supported by PowerShell,
+also sets the separate response-read timeout to 120 seconds.
 
 ## What it does NOT intentionally change
 
@@ -280,9 +342,20 @@ Cleanup runs when:
 
 * the server is stopped normally,
 * the temporary Edge window is closed,
-* a manual SOCKS5 client is stopped with `Ctrl+C`,
+* a manual SOCKS5 or TCP forwarding client is stopped with `Ctrl+C`,
 * Tailcat exits with an error,
 * either script encounters a normal error.
+
+Cleanup attempts each step even if another step fails. It verifies process
+termination and directory removal, and reports anything it could not clean up.
+Runtime directory removal is restricted to the generated directory under the
+original temporary location. Windows tracks temporary Edge processes by both
+PID and creation time, and checks their identity again before stopping them.
+
+Windows returns exit code `0` on normal completion (including Quit), or `1` on
+an error or incomplete cleanup. Linux preserves Tailcat's exit status and uses
+the usual signal exit codes, such as `130` for `Ctrl+C`. Failed Linux cleanup
+changes an otherwise successful exit to `1`.
 
 A forced process kill, system crash, power loss or reboot can prevent cleanup from running.
 
@@ -303,7 +376,7 @@ It can be safely removed manually when Tailcat-OneShot is no longer running.
 Tailcat-OneShot currently uses:
 
 ```text
-Tailcat v0.4.0
+Tailcat v0.6.0
 ```
 
 The version is **intentionally pinned**.
@@ -312,11 +385,16 @@ Tailcat is a young project and currently does not guarantee stability of its CLI
 
 New Tailcat versions should be tested before updating the pinned version.
 
+Use the updated wrapper on both the server and client. Tailcat v0.6.0 includes
+a WireGuard pre-shared key (PSK) in newly generated addresses by default;
+clients v0.5.0 and earlier cannot connect to those addresses. Tailcat-OneShot
+keeps PSK enabled and continues to generate fresh identities with `--key=new`.
+
 ## Security
 
 Tailcat provides end-to-end encrypted connectivity using the Tailscale data plane without requiring the normal Tailscale control plane.
 
-Tailcat-OneShot does not save the generated server or client key.
+Tailcat-OneShot does not save the generated WireGuard private keys.
 
 Both the server and client are explicitly started with:
 
@@ -328,11 +406,18 @@ which creates new ephemeral identities for each session.
 
 Treat the generated `tc...` token as a temporary access credential. Anyone who has a valid token may be able to connect while that Tailcat session is active.
 
+The token is Tailcat's connection address and now also contains the secret PSK.
+It remains valid only for that running session.
+
 Do not publish or otherwise expose an active token.
 
 ## Limitations
 
 Tailcat-OneShot is primarily intended for accessing **TCP services** on the remote network through SOCKS5.
+
+Tailcat v0.6.0 also supports UDP through SOCKS5 UDP ASSOCIATE. This requires
+support in the application using the proxy; it does not automatically enable
+UDP for every application.
 
 It is not a full system VPN replacement.
 
@@ -369,6 +454,29 @@ https://github.com/tailscale/tailcat
 Tailcat-OneShot is an independent helper script and is **not an official Tailscale project**.
 
 Tailcat itself is distributed under the BSD 3-Clause License.
+
+## Development checks
+
+The offline regression tests cover errors, process ownership, cleanup and
+downloads. They use temporary fixtures and do not start a real Tailcat connection.
+They are not needed to run either helper.
+
+On Windows, with Pester 5 installed:
+
+```powershell
+Invoke-Pester ./tests/Windows.Tests.ps1
+```
+
+On Linux:
+
+```sh
+sh tests/Linux.Tests.sh
+```
+
+Run the Windows checks in both Windows PowerShell 5.1 and PowerShell 7 when
+changing Windows behavior. Git Bash can run the shell checks as a preliminary
+check, but does not replace testing on Linux; the symlink check is skipped on
+hosts that emulate links by copying files.
 
 ## License
 

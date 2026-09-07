@@ -8,10 +8,11 @@
 set -eu
 umask 077
 
-TAILCAT_VERSION="v0.4.0"
+TAILCAT_VERSION="v0.6.0"
 RELEASE_BASE_URL="https://github.com/tailscale/tailcat/releases/download"
 
 RUNTIME_DIR=""
+RUNTIME_BASE=""
 TAILCAT_BIN=""
 TAILCAT_PID=""
 
@@ -48,12 +49,7 @@ detect_architecture() {
 }
 
 
-cleanup() {
-    cleanup_exit_status=$?
-
-    trap - 0 1 2 15
-
-    printf '\nCleaning up...\n'
+stop_tailcat() {
 
     if [ -n "${TAILCAT_PID:-}" ]; then
         if kill -0 "$TAILCAT_PID" 2>/dev/null; then
@@ -79,32 +75,75 @@ cleanup() {
 
         if kill -0 "$TAILCAT_PID" 2>/dev/null; then
             printf '[WARN] Tailcat process remains: %s\n' "$TAILCAT_PID"
+            return 1
         else
             printf '[OK] Tailcat stopped and verified\n'
         fi
     else
         printf '[OK] No Tailcat process to stop\n'
     fi
+    TAILCAT_PID=""
+}
 
-    if [ -n "${RUNTIME_DIR:-}" ] && [ -d "$RUNTIME_DIR" ]; then
-        case "${RUNTIME_DIR##*/}" in
-            tailcat-oneshot.*)
-                rm -rf "$RUNTIME_DIR" || true
-                ;;
-            *)
-                printf '[WARN] Refusing to remove unexpected path: %s\n' \
-                    "$RUNTIME_DIR"
-                ;;
-        esac
+
+remove_runtime_directory() {
+    [ -n "$RUNTIME_DIR" ] || return 0
+
+    # Only remove a direct child of the original, absolute temporary base.
+    if [ "${RUNTIME_DIR%/*}/" != "${RUNTIME_BASE%/}/" ] || [ -L "$RUNTIME_DIR" ]; then
+        printf '[WARN] Refusing to remove unexpected runtime path: %s\n' "$RUNTIME_DIR"
+        return 1
     fi
 
-    if [ -n "${RUNTIME_DIR:-}" ] && [ -e "$RUNTIME_DIR" ]; then
+    case "${RUNTIME_DIR##*/}" in
+        tailcat-oneshot.????????) rm -rf -- "$RUNTIME_DIR" || true ;;
+        *)
+            printf '[WARN] Refusing to remove unexpected runtime path: %s\n' "$RUNTIME_DIR"
+            return 1
+            ;;
+    esac
+
+    if [ -e "$RUNTIME_DIR" ]; then
         printf '[WARN] Runtime directory remains: %s\n' "$RUNTIME_DIR"
+        return 1
     else
         printf '[OK] Runtime directory removed and verified\n'
     fi
+}
+
+
+cleanup() {
+    cleanup_exit_status=$?
+    trap - 0 1 2 15
+
+    printf '\nCleaning up...\n'
+
+    stop_tailcat || {
+        [ "$cleanup_exit_status" -ne 0 ] || cleanup_exit_status=1
+    }
+    remove_runtime_directory || {
+        [ "$cleanup_exit_status" -ne 0 ] || cleanup_exit_status=1
+    }
 
     exit "$cleanup_exit_status"
+}
+
+
+download_file() {
+    curl \
+        --disable \
+        --fail \
+        --location \
+        --silent \
+        --show-error \
+        --connect-timeout 15 \
+        --max-time 120 \
+        --retry 2 \
+        --retry-delay 2 \
+        --retry-max-time 360 \
+        --retry-connrefused \
+        --output "$2" \
+        "$1" || fail "Download failed: $1"
 }
 
 
@@ -120,23 +159,13 @@ download_tailcat() {
     printf '\nDownloading Tailcat %s for linux/%s...\n' \
         "$TAILCAT_VERSION" "$download_architecture"
 
-    curl \
-        --disable \
-        --fail \
-        --location \
-        --silent \
-        --show-error \
-        --output "$archive_path" \
-        "$RELEASE_BASE_URL/$TAILCAT_VERSION/$archive_name"
+    download_file \
+        "$RELEASE_BASE_URL/$TAILCAT_VERSION/$archive_name" \
+        "$archive_path"
 
-    curl \
-        --disable \
-        --fail \
-        --location \
-        --silent \
-        --show-error \
-        --output "$checksums_path" \
-        "$RELEASE_BASE_URL/$TAILCAT_VERSION/checksums.txt"
+    download_file \
+        "$RELEASE_BASE_URL/$TAILCAT_VERSION/checksums.txt" \
+        "$checksums_path"
 
     expected_hash="$(
         awk -v archive="$archive_name" \
@@ -210,24 +239,77 @@ run_tailcat() {
     "$TAILCAT_BIN" "$@" &
     TAILCAT_PID=$!
 
-    wait "$TAILCAT_PID"
+    wait_tailcat
+}
+
+
+wait_tailcat() {
+    tailcat_exit_status=0
+    wait "$TAILCAT_PID" || tailcat_exit_status=$?
+    # The child has been reaped; its PID must no longer be used by cleanup.
+    TAILCAT_PID=""
+    return "$tailcat_exit_status"
+}
+
+
+show_server_qr() {
+    qr_attempt=0
+    while [ "$qr_attempt" -lt 300 ]; do
+        kill -0 "$TAILCAT_PID" 2>/dev/null || return 0
+        if [ -s "$1" ]; then
+            # Tailcat writes no trailing newline. Reject an incomplete write.
+            qr_token=""
+            IFS= read -r qr_token < "$1" || true
+            if "$TAILCAT_BIN" parse "$qr_token" >/dev/null 2>&1; then
+                printf '\nScan this QR code to copy the server token:\n'
+                if ! printf '%s' "$qr_token" | qrencode -t ANSIUTF8 -l M -m 4; then
+                    printf '[WARN] QR could not be displayed; use the printed token.\n'
+                fi
+                return 0
+            fi
+        fi
+        sleep 0.1
+        qr_attempt=$((qr_attempt + 1))
+    done
+    printf '[WARN] QR token was not ready within 30 seconds; use the printed token.\n'
 }
 
 
 run_server() {
     show_runtime_info
 
+    qr_answer=""
+    if command -v qrencode >/dev/null 2>&1; then
+        printf '\nQR needs a UTF-8 console with room for the whole code (80x40 recommended).\n'
+        printf 'Show the server token as a QR code? [y/N]: '
+        IFS= read -r qr_answer || qr_answer=""
+    else
+        printf '\n[INFO] Optional QR codes need qrencode. Install separately as administrator:\n'
+        printf '       Debian/Ubuntu: apt install qrencode\n'
+        printf '       Alpine Linux : apk add libqrencode-tools\n'
+    fi
+
     printf '\nStarting Tailcat exit-node...\n\n'
     printf '%s\n' 'Share the generated tc... token with the client.'
     printf '%s\n\n' 'Press Ctrl+C to stop and clean up.'
 
-    run_tailcat --key=new serve exit-node
+    case "$qr_answer" in
+        y|Y|yes|YES)
+            TAILCAT_ADDR_FILE="$RUNTIME_DIR/tc.txt" \
+                "$TAILCAT_BIN" --key=new serve exit-node &
+            TAILCAT_PID=$!
+            show_server_qr "$RUNTIME_DIR/tc.txt"
+            wait_tailcat
+            ;;
+        *)
+            run_tailcat --key=new serve exit-node
+            ;;
+    esac
 }
 
 
-run_client() {
+read_client_token() {
     client_token=""
-    client_socks_port=""
 
     while :; do
         printf 'Tailcat tc... token: '
@@ -243,6 +325,32 @@ run_client() {
                 ;;
         esac
     done
+}
+
+
+run_forward() {
+    read_client_token
+    printf '\nMapping: local-port:remote-IP:remote-port\n'
+    printf 'Example: 13389:192.168.1.20:3389\n'
+    printf 'Use local port 0 to choose a free port automatically.\n'
+    printf 'Mapping: '
+    if ! IFS= read -r forward_mapping; then
+        printf '\n' >&2
+        return 1
+    fi
+    [ -n "$forward_mapping" ] || fail "A port mapping is required"
+
+    show_runtime_info
+    printf '\nStarting TCP forwarding on localhost...\n'
+    printf 'Tailcat will print the local endpoint when ready.\n'
+    printf 'Press Ctrl+C to disconnect and clean up.\n\n'
+    run_tailcat --key=new forward "$client_token" "$forward_mapping"
+}
+
+
+run_client() {
+    read_client_token
+    client_socks_port=""
 
     printf 'Local SOCKS5 port [1080]: '
 
@@ -298,6 +406,8 @@ main() {
     printf '%s\n\n' '    Expose this machine/network as a Tailcat exit-node'
     printf '%s\n' '[2] CLIENT'
     printf '%s\n\n' '    Start a local SOCKS5 proxy for manual configuration'
+    printf '%s\n' '[3] FORWARD'
+    printf '%s\n\n' '    Forward a local TCP port to a service on the remote network'
     printf '%s\n\n' '[Q] Quit'
 
     printf 'Select: '
@@ -308,7 +418,7 @@ main() {
     fi
 
     case "$choice" in
-        1|2)
+        1|2|3)
             ;;
         q|Q)
             return 0
@@ -325,7 +435,8 @@ main() {
         fail "Temporary directory is not writable: $temp_base"
     fi
 
-    RUNTIME_DIR="$(mktemp -d "$temp_base/tailcat-oneshot.XXXXXXXX")"
+    RUNTIME_BASE="$(CDPATH= cd -P -- "$temp_base" && pwd -P)"
+    RUNTIME_DIR="$(mktemp -d "${RUNTIME_BASE%/}/tailcat-oneshot.XXXXXXXX")"
 
     trap cleanup 0
     trap 'exit 130' 2
@@ -341,6 +452,9 @@ main() {
             ;;
         2)
             run_client
+            ;;
+        3)
+            run_forward
             ;;
     esac
 }
