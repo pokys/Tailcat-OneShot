@@ -262,7 +262,7 @@ show_server_qr() {
             IFS= read -r qr_token < "$1" || true
             if "$TAILCAT_BIN" parse "$qr_token" >/dev/null 2>&1; then
                 printf '\nScan this QR code to copy the server token:\n'
-                if ! printf '%s' "$qr_token" | qrencode -t ANSIUTF8 -l M -m 4; then
+                if ! printf '%s' "$qr_token" | qrencode -t ANSIUTF8 -l L -m 2; then
                     printf '[WARN] QR could not be displayed; use the printed token.\n'
                 fi
                 return 0
@@ -280,7 +280,7 @@ run_server() {
 
     qr_answer=""
     if command -v qrencode >/dev/null 2>&1; then
-        printf '\nQR needs a UTF-8 console with room for the whole code (80x40 recommended).\n'
+        printf '\nQR needs a UTF-8 console with room for the whole code (80x25 recommended).\n'
         printf 'QR does not fit? Maximize the console or reduce its font size.\n'
         printf 'Show the server token as a QR code? [y/N]: '
         IFS= read -r qr_answer || qr_answer=""

@@ -236,7 +236,7 @@ for scenario in server client forward qr_yes qr_partial qr_failure qr_decline qr
     fi
     if [ "$expect_qr" -eq 1 ]; then
         [ "$(cat "$test_dir/$scenario.qr.input")" = tc-test-token ]
-        printf '%s\n' -t ANSIUTF8 -l M -m 4 > "$test_dir/expected-qr-args"
+        printf '%s\n' -t ANSIUTF8 -l L -m 2 > "$test_dir/expected-qr-args"
         cmp "$test_dir/expected-qr-args" "$test_dir/$scenario.qr.args"
     else
         [ ! -e "$test_dir/$scenario.qr.input" ]

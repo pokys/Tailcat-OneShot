@@ -248,7 +248,7 @@ Install it separately, using your distribution's package manager as administrato
 
 QR generation runs locally and displays directly in the text console, including
 a VM console in ESXi or PVE. It needs UTF-8, a font with block characters and
-enough space to show the complete code; 80 columns by 40 rows is recommended
+enough space to show the complete code; 80 columns by 25 rows is recommended
 for the usual token. A longer token may require more space. Read the QR with
 a phone or an offline QR reader on a screenshot of the console.
 
