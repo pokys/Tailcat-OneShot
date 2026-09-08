@@ -1,11 +1,20 @@
-# Tailcat-OneShot
-<img width="532" height="367" alt="image" src="https://github.com/user-attachments/assets/5118c343-e5dd-48d2-a9f7-0384764491e2" />
+<p align="center">
+  <img width="128" alt="Tailcat-OneShot logo" src="https://github.com/user-attachments/assets/a990587c-a689-49f8-9826-e51d8000e55b" />
+</p>
 
-A small, temporary Windows and Linux helper for [Tailcat](https://github.com/tailscale/tailcat).
+<h1 align="center">Tailcat-OneShot</h1>
+
+<p align="center">
+  A small, temporary Windows and Linux helper for <a href="https://github.com/tailscale/tailcat">Tailcat</a>.
+</p>
 
 Tailcat-OneShot makes it easy to create a **one-shot encrypted connection to a remote machine and its local network** without installing a VPN client, changing system routing, or configuring firewall rules.
 
 It is intended primarily as a lightweight **remote service / troubleshooting tool**.
+
+<p align="center">
+  <img width="626" alt="Tailcat-OneShot menu in Windows PowerShell showing SERVER, CLIENT and FORWARD modes" src="https://github.com/user-attachments/assets/308994a9-18d1-4f8a-91de-26aeab99b15e" />
+</p>
 
 ## How it works
 
