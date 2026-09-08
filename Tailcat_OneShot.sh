@@ -281,6 +281,7 @@ run_server() {
     qr_answer=""
     if command -v qrencode >/dev/null 2>&1; then
         printf '\nQR needs a UTF-8 console with room for the whole code (80x40 recommended).\n'
+        printf 'QR does not fit? Maximize the console or reduce its font size.\n'
         printf 'Show the server token as a QR code? [y/N]: '
         IFS= read -r qr_answer || qr_answer=""
     else
